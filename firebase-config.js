@@ -22,12 +22,12 @@ import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-
 
 // ---- HIER deine Keys eintragen ----
 export const firebaseConfig = {
-  apiKey: "DEIN_API_KEY",
-  authDomain: "DEIN_PROJEKT.firebaseapp.com",
-  projectId: "DEIN_PROJEKT_ID",
-  storageBucket: "DEIN_PROJEKT.appspot.com",
-  messagingSenderId: "DEIN_SENDER_ID",
-  appId: "DEINE_APP_ID",
+ apiKey: "AIzaSyB1pvCRNebsz4HIT0ONtnTgUOBSqB-7yFo",
+  authDomain: "gbreinigung-48487.firebaseapp.com",
+  projectId: "gbreinigung-48487",
+  storageBucket: "gbreinigung-48487.firebasestorage.app",
+  messagingSenderId: "589312551873",
+  appId: "1:589312551873:web:9f58b9d53e19ad95f41d40"
 };
 
 // ---- Admin-Account ----
