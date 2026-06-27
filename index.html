@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#161b26" />
+    <title>G&B Reinigung – Disposition</title>
+
+    <!-- Tailwind über CDN (kein Build nötig) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50: "#eef4ff", 100: "#d9e6ff", 200: "#bcd3ff", 300: "#8eb6ff",
+                400: "#598dff", 500: "#3366ff", 600: "#1f4ce6", 700: "#1a3cba",
+                800: "#1c3596", 900: "#1d3177",
+              },
+              ink: { 800: "#1e2533", 900: "#161b26", 950: "#0e1119" },
+            },
+            fontFamily: { sans: ["Inter", "system-ui", "sans-serif"] },
+          },
+        },
+      };
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+    <!-- Wiederverwendbare Komponentenklassen (Plain-CSS, robust mit CDN) -->
+    <style>
+      html, body, #app { height: 100%; }
+      body { font-family: Inter, system-ui, sans-serif; background:#f3f4f6; margin:0; -webkit-font-smoothing:antialiased; }
+
+      .btn { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; border-radius:.5rem; padding:.5rem 1rem; font-size:.875rem; font-weight:600; transition:all .15s ease; cursor:pointer; border:none; line-height:1.25rem; }
+      .btn:active { transform: scale(.98); }
+      .btn:disabled { opacity:.5; cursor:not-allowed; }
+      .btn-primary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; border-radius:.5rem; padding:.5rem 1rem; font-size:.875rem; font-weight:600; transition:all .15s ease; cursor:pointer; border:none; background:#3366ff; color:#fff; box-shadow:0 1px 2px rgba(0,0,0,.05); }
+      .btn-primary:hover { background:#1f4ce6; }
+      .btn-primary:active { transform: scale(.98); }
+      .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+      .btn-secondary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; border-radius:.5rem; padding:.5rem 1rem; font-size:.875rem; font-weight:600; transition:all .15s ease; cursor:pointer; background:#fff; color:#374151; border:1px solid #d1d5db; }
+      .btn-secondary:hover { background:#f9fafb; }
+      .btn-secondary:active { transform: scale(.98); }
+      .input { width:100%; border-radius:.5rem; border:1px solid #d1d5db; background:#fff; padding:.5rem .75rem; font-size:16px; color:#111827; outline:none; transition:all .15s ease; box-sizing:border-box; }
+      .input:focus { border-color:#3366ff; box-shadow:0 0 0 2px #d9e6ff; }
+      .label { display:block; margin-bottom:.25rem; font-size:.875rem; font-weight:500; color:#374151; }
+      .card { border-radius:.75rem; border:1px solid #e5e7eb; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.05); }
+    </style>
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <!-- Modal-Container -->
+    <div id="modal-root"></div>
+
+    <script type="module">
+      // ===========================================================
+      //  Imports: Firebase-Dienste aus der EINEN Firebase-Datei + SDK
+      // ===========================================================
+      import { auth, db, storage, ADMIN_EMAIL } from "./firebase-config.js";
+      import {
+        onAuthStateChanged, signInWithEmailAndPassword,
+        createUserWithEmailAndPassword, signOut,
+      } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+      import {
+        doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc,
+        collection, onSnapshot, query, where, orderBy,
+        serverTimestamp, Timestamp,
+      } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+      import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+
+      // ===========================================================
+      //  Konstanten
+      // ===========================================================
+      const STATUS = { GEPLANT:"geplant", EINGECHECKT:"eingecheckt", ERLEDIGT:"erledigt", NICHT_ERLEDIGT:"nicht_erledigt" };
+      const STATUS_META = {
+        geplant:        { label:"Geplant",        badge:"bg-gray-100 text-gray-700 ring-gray-200",  dot:"bg-gray-400" },
+        eingecheckt:    { label:"Eingecheckt",    badge:"bg-blue-100 text-blue-700 ring-blue-200",  dot:"bg-blue-500" },
+        erledigt:       { label:"Erledigt",       badge:"bg-green-100 text-green-700 ring-green-200", dot:"bg-green-500" },
+        nicht_erledigt: { label:"Nicht erledigt", badge:"bg-red-100 text-red-700 ring-red-200",     dot:"bg-red-500" },
+      };
+      const REINIGUNGSARTEN = ["Fensterreinigung","Treppenhausreinigung","Grundreinigung","Außenreinigung","Sonstiges"];
+
+      // ===========================================================
+      //  Helfer
+      // ===========================================================
+      const esc = (s="") => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+      const toDate = v => { if(!v) return null; if(typeof v.toDate==="function") return v.toDate(); const d=new Date(v); return isNaN(d)?null:d; };
+      const ymd = v => { const d = v instanceof Date ? v : toDate(v); if(!d||isNaN(d)) return ""; return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+      const todayYMD = () => ymd(new Date());
+      const fmtDate = v => { const d=toDate(v); return d ? d.toLocaleDateString("de-DE",{weekday:"short",day:"2-digit",month:"2-digit",year:"numeric"}) : "—"; };
+      const fmtTime = v => { const d=toDate(v); return d ? d.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}) : "—"; };
+      const fmtDur = (a,b) => { const x=toDate(a),y=toDate(b); if(!x||!y) return "—"; let m=Math.max(0,Math.round((y-x)/60000)); const h=Math.floor(m/60); m=m%60; return h?`${h} Std ${m} Min`:`${m} Min`; };
+      const mapsLink = a => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a||"")}`;
+      const initials = (n="") => n.split(" ").filter(Boolean).slice(0,2).map(s=>s[0]?.toUpperCase()).join("");
+      const startOfWeek = (date=new Date()) => { const d=new Date(date); const day=(d.getDay()+6)%7; d.setHours(0,0,0,0); d.setDate(d.getDate()-day); return d; };
+      const authErr = code => ({
+        "auth/invalid-email":"Ungültige E-Mail-Adresse.",
+        "auth/user-disabled":"Dieser Benutzer ist deaktiviert.",
+        "auth/user-not-found":"Kein Benutzer mit dieser E-Mail gefunden.",
+        "auth/wrong-password":"Falsches Passwort.",
+        "auth/invalid-credential":"E-Mail oder Passwort ist falsch.",
+        "auth/too-many-requests":"Zu viele Versuche. Bitte später erneut.",
+        "auth/email-already-in-use":"Diese E-Mail wird bereits verwendet.",
+        "auth/weak-password":"Das Passwort muss mind. 6 Zeichen haben.",
+      }[code] || "Ein Fehler ist aufgetreten. Bitte erneut versuchen.");
+
+      const $app = document.getElementById("app");
+      const $modal = document.getElementById("modal-root");
+      const closeModal = () => { $modal.innerHTML = ""; };
+
+      // ===========================================================
+      //  Globaler Zustand
+      // ===========================================================
+      const state = {
+        user: null,        // Firebase-Auth-User
+        profile: null,     // users/{uid}
+        auftraege: [],     // alle Aufträge (Disponent) ODER eigene (Arbeiter)
+        arbeiter: [],      // Liste der Reinigungskräfte (nur Disponent)
+        // Disponent-Ansicht
+        view: "heute",
+        statusFilter: "alle",
+        arbeiterFilter: "alle",
+        suche: "",
+        nav: "dashboard",  // dashboard | arbeiter
+        showArbForm: false,
+      };
+      let unsubAuftraege = null, unsubArbeiter = null, unsubProfile = null;
+
+      // ===========================================================
+      //  Auth-Steuerung
+      // ===========================================================
+      onAuthStateChanged(auth, async (user) => {
+        // alte Listener abbauen
+        if (unsubProfile) { unsubProfile(); unsubProfile = null; }
+        if (unsubAuftraege) { unsubAuftraege(); unsubAuftraege = null; }
+        if (unsubArbeiter) { unsubArbeiter(); unsubArbeiter = null; }
+        state.user = user;
+        state.profile = null;
+        state.auftraege = [];
+        state.arbeiter = [];
+
+        if (!user) { renderLogin(); return; }
+
+        renderLoading("Anmeldung wird geprüft …");
+
+        // Admin-Profil bei Bedarf automatisch anlegen
+        await ensureAdminProfile(user);
+
+        // Profil live abonnieren
+        unsubProfile = onSnapshot(doc(db,"users",user.uid), (snap) => {
+          state.profile = snap.exists() ? { id:snap.id, ...snap.data() } : null;
+          route();
+        }, () => { state.profile = null; route(); });
+      });
+
+      async function ensureAdminProfile(user) {
+        try {
+          const refu = doc(db,"users",user.uid);
+          const snap = await getDoc(refu);
+          if (!snap.exists() && user.email === ADMIN_EMAIL) {
+            await setDoc(refu, { uid:user.uid, name:"Admin G&B", email:user.email, role:"disponent", active:true });
+          }
+        } catch (e) { console.error("ensureAdminProfile:", e); }
+      }
+
+      // Routing nach Rolle / Status
+      function route() {
+        const p = state.profile;
+        if (!state.user) return renderLogin();
+        if (!p) return renderNoProfile();
+        if (p.active === false) return renderInactive();
+        if (p.role === "disponent") { startDisponent(); }
+        else { startArbeiter(); }
+      }
+
+      // ===========================================================
+      //  LOGIN
+      // ===========================================================
+      function renderLogin(error="") {
+        $app.innerHTML = `
+          <div class="relative flex min-h-screen items-center justify-center bg-ink-950 p-4">
+            <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-ink-900 via-ink-950 to-black"></div>
+            <div class="relative w-full max-w-sm">
+              <div class="mb-8 text-center">
+                <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-500 text-xl font-extrabold text-white shadow-lg">G&B</div>
+                <h1 class="text-2xl font-bold text-white">G&B Reinigung</h1>
+                <p class="mt-1 text-sm text-gray-400">Disponenten- & Auftragstool</p>
+              </div>
+              <form id="loginForm" class="rounded-2xl bg-white p-6 shadow-2xl">
+                <h2 class="mb-5 text-lg font-semibold text-gray-900">Anmelden</h2>
+                <div id="loginError" class="${error?"":"hidden"} mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-100">${esc(error)}</div>
+                <div class="mb-4">
+                  <label class="label" for="email">E-Mail</label>
+                  <input id="email" type="email" required class="input" placeholder="name@firma.de" autocomplete="email" />
+                </div>
+                <div class="mb-6">
+                  <label class="label" for="password">Passwort</label>
+                  <input id="password" type="password" required class="input" placeholder="••••••••" autocomplete="current-password" />
+                </div>
+                <button id="loginBtn" type="submit" class="btn-primary w-full py-2.5">Anmelden</button>
+              </form>
+              <p class="mt-6 text-center text-xs text-gray-500">© ${new Date().getFullYear()} G&B Reinigung</p>
+            </div>
+          </div>`;
+        document.getElementById("loginForm").addEventListener("submit", handleLogin);
+      }
+
+      async function handleLogin(e) {
+        e.preventDefault();
+        const email = document.getElementById("email").value.trim();
+        const pw = document.getElementById("password").value;
+        const btn = document.getElementById("loginBtn");
+        const errBox = document.getElementById("loginError");
+        const showErr = (m) => { errBox.textContent = m; errBox.classList.remove("hidden"); };
+        btn.disabled = true; btn.textContent = "Anmelden …";
+        try {
+          await signInWithEmailAndPassword(auth, email, pw);
+          // Weiterleitung passiert über onAuthStateChanged
+        } catch (err) {
+          // Admin beim allerersten Mal automatisch anlegen
+          if (email === ADMIN_EMAIL && (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential")) {
+            try {
+              await createUserWithEmailAndPassword(auth, email, pw);
+              return; // eingeloggt -> onAuthStateChanged übernimmt
+            } catch (err2) {
+              if (err2.code === "auth/email-already-in-use") showErr("Falsches Passwort.");
+              else showErr(authErr(err2.code));
+            }
+          } else {
+            showErr(authErr(err.code));
+          }
+          btn.disabled = false; btn.textContent = "Anmelden";
+        }
+      }
+
+      function renderLoading(label="Lädt …") {
+        $app.innerHTML = `<div class="flex min-h-screen items-center justify-center gap-3 text-gray-500">
+          <span class="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-brand-500"></span>
+          <span class="text-sm font-medium">${esc(label)}</span></div>`;
+      }
+      function renderNoProfile() {
+        $app.innerHTML = msgScreen("⚠️","Kein Benutzerprofil","Für dieses Konto wurde kein Profil mit Rolle angelegt. Bitte wende dich an den Admin.");
+      }
+      function renderInactive() {
+        $app.innerHTML = msgScreen("🔒","Konto deaktiviert","Dein Konto wurde deaktiviert. Bitte wende dich an den Admin.")
+          + "";
+        bindLogout();
+      }
+      function msgScreen(icon,title,sub) {
+        return `<div class="flex min-h-screen items-center justify-center bg-gray-100 p-6"><div class="card max-w-md p-8 text-center">
+          <div class="mb-3 text-4xl">${icon}</div>
+          <h2 class="text-lg font-semibold text-gray-900">${esc(title)}</h2>
+          <p class="mt-2 text-sm text-gray-600">${esc(sub)}</p>
+          <button data-action="logout" class="btn-secondary mt-5">Abmelden</button>
+        </div></div>`;
+      }
+      function bindLogout() {
+        $app.querySelectorAll('[data-action="logout"]').forEach(b => b.addEventListener("click", () => signOut(auth)));
+      }
+
+      // ===========================================================
+      //  DISPONENT
+      // ===========================================================
+      function startDisponent() {
+        // Live-Daten laden (nur einmal abonnieren)
+        if (!unsubAuftraege) {
+          unsubAuftraege = onSnapshot(query(collection(db,"auftraege"), orderBy("geplantesDatum","asc")), (snap) => {
+            state.auftraege = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+            if (state.profile?.role === "disponent") renderDisponent();
+          }, (e)=>console.error(e));
+        }
+        if (!unsubArbeiter) {
+          unsubArbeiter = onSnapshot(collection(db,"users"), (snap) => {
+            state.arbeiter = snap.docs.map(d => ({ id:d.id, ...d.data() })).filter(u => u.role === "arbeiter");
+            if (state.profile?.role === "disponent") renderDisponent();
+          });
+        }
+        renderDisponent();
+      }
+
+      function arbeiterMap() { const m={}; state.arbeiter.forEach(a=>m[a.id]=a); return m; }
+
+      function filterAuftraege() {
+        const heute = todayYMD();
+        const wStart = startOfWeek(); const wEnd = new Date(wStart); wEnd.setDate(wEnd.getDate()+7);
+        return state.auftraege.filter(a => {
+          const d = toDate(a.geplantesDatum);
+          if (state.view==="heute" && ymd(a.geplantesDatum)!==heute) return false;
+          if (state.view==="woche" && d && (d<wStart || d>=wEnd)) return false;
+          if (state.statusFilter!=="alle" && a.status!==state.statusFilter) return false;
+          if (state.arbeiterFilter!=="alle" && !(a.zugewieseneArbeiter||[]).includes(state.arbeiterFilter)) return false;
+          if (state.suche.trim()) { const s=state.suche.toLowerCase(); if(!(a.kunde?.toLowerCase().includes(s)||a.adresse?.toLowerCase().includes(s))) return false; }
+          return true;
+        });
+      }
+
+      function viewStats() {
+        const heute=todayYMD(); const wStart=startOfWeek(); const wEnd=new Date(wStart); wEnd.setDate(wEnd.getDate()+7);
+        const base = state.auftraege.filter(a => {
+          const d=toDate(a.geplantesDatum);
+          if (state.view==="heute") return ymd(a.geplantesDatum)===heute;
+          if (state.view==="woche") return d && d>=wStart && d<wEnd;
+          return true;
+        });
+        return {
+          gesamt: base.length,
+          geplant: base.filter(a=>a.status===STATUS.GEPLANT).length,
+          eingecheckt: base.filter(a=>a.status===STATUS.EINGECHECKT).length,
+          erledigt: base.filter(a=>a.status===STATUS.ERLEDIGT).length,
+          nicht: base.filter(a=>a.status===STATUS.NICHT_ERLEDIGT).length,
+        };
+      }
+
+      function badge(status) {
+        const m = STATUS_META[status] || STATUS_META.geplant;
+        return `<span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${m.badge}"><span class="h-1.5 w-1.5 rounded-full ${m.dot}"></span>${m.label}</span>`;
+      }
+
+      function renderDisponent() {
+        if (state.nav === "arbeiter") return renderArbeiterverwaltung();
+
+        const am = arbeiterMap();
+        const list = filterAuftraege();
+        const s = viewStats();
+        const stat = (label,val,color) => `<div class="card flex items-center gap-3 p-3"><span class="h-9 w-1.5 rounded-full ${color}"></span><div><div class="text-2xl font-bold leading-none text-gray-900">${val}</div><div class="mt-1 text-xs font-medium text-gray-500">${label}</div></div></div>`;
+        const tab = (key,label) => `<button data-action="view" data-view="${key}" class="flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition ${state.view===key?"bg-white text-gray-900 shadow-sm":"text-gray-500 hover:text-gray-700"}">${label}</button>`;
+
+        const cards = list.length ? list.map(a => auftragCardDisponent(a, am)).join("") :
+          emptyState("🧹","Keine Aufträge gefunden", state.view==="heute" ? "Für heute sind keine Aufträge geplant – oder die Filter sind zu eng." : "Keine Aufträge passen zu den Filtern.");
+
+        $app.innerHTML = shell(`
+          <div class="mx-auto max-w-6xl">
+            <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <div><h1 class="text-2xl font-bold text-gray-900">Dashboard</h1><p class="text-sm text-gray-500">Übersicht aller Aufträge</p></div>
+              <button data-action="neu" class="btn-primary">+ Neuer Auftrag</button>
+            </div>
+            <div class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+              ${stat("Gesamt",s.gesamt,"bg-ink-900")}${stat("Geplant",s.geplant,"bg-gray-400")}${stat("Eingecheckt",s.eingecheckt,"bg-blue-500")}${stat("Erledigt",s.erledigt,"bg-green-500")}${stat("Nicht erledigt",s.nicht,"bg-red-500")}
+            </div>
+            <div class="mb-4 flex gap-1 rounded-lg bg-gray-200 p-1">${tab("heute","Heute")}${tab("woche","Diese Woche")}${tab("alle","Alle")}</div>
+            <div class="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <input id="fSuche" class="input" placeholder="🔍 Kunde oder Adresse suchen …" value="${esc(state.suche)}" />
+              <select id="fStatus" class="input">
+                ${["alle","geplant","eingecheckt","erledigt","nicht_erledigt"].map(v=>`<option value="${v}" ${state.statusFilter===v?"selected":""}>${v==="alle"?"Alle Status":STATUS_META[v].label}</option>`).join("")}
+              </select>
+              <select id="fArbeiter" class="input">
+                <option value="alle">Alle Arbeiter</option>
+                ${state.arbeiter.map(a=>`<option value="${a.id}" ${state.arbeiterFilter===a.id?"selected":""}>${esc(a.name)}</option>`).join("")}
+              </select>
+            </div>
+            <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">${cards}</div>
+          </div>
+        `, "dashboard");
+
+        // Events
+        bindShell();
+        $app.querySelectorAll('[data-action="view"]').forEach(b=>b.addEventListener("click",()=>{state.view=b.dataset.view; renderDisponent();}));
+        $app.querySelector('[data-action="neu"]')?.addEventListener("click",()=>openAuftragModal(null));
+        const fSuche=$app.querySelector("#fSuche");
+        fSuche.addEventListener("input",()=>{ state.suche=fSuche.value; const pos=fSuche.selectionStart; renderDisponent(); const n=$app.querySelector("#fSuche"); n.focus(); n.setSelectionRange(pos,pos); });
+        $app.querySelector("#fStatus").addEventListener("change",e=>{state.statusFilter=e.target.value; renderDisponent();});
+        $app.querySelector("#fArbeiter").addEventListener("change",e=>{state.arbeiterFilter=e.target.value; renderDisponent();});
+        $app.querySelectorAll('[data-action="edit"]').forEach(b=>b.addEventListener("click",()=>openAuftragModal(state.auftraege.find(a=>a.id===b.dataset.id))));
+        $app.querySelectorAll('[data-action="del"]').forEach(b=>b.addEventListener("click",()=>handleDelete(state.auftraege.find(a=>a.id===b.dataset.id))));
+      }
+
+      function auftragCardDisponent(a, am) {
+        const dot = STATUS_META[a.status]?.dot || "bg-gray-400";
+        const dringend = a.prioritaet==="dringend";
+        const namen = (a.zugewieseneArbeiter||[]).map(uid=>am[uid]?.name).filter(Boolean);
+        return `<div class="card relative overflow-hidden p-4">
+          <span class="absolute inset-y-0 left-0 w-1 ${dot}"></span>
+          <div class="flex items-start justify-between gap-3 pl-2">
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <h3 class="truncate font-semibold text-gray-900">${esc(a.kunde)}</h3>
+                ${dringend?`<span class="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-red-700">Dringend</span>`:""}
+              </div>
+              <p class="mt-0.5 text-sm text-gray-500">${esc(a.reinigungsart)}</p>
+            </div>
+            ${badge(a.status)}
+          </div>
+          <div class="mt-3 space-y-1.5 pl-2 text-sm text-gray-600">
+            <div class="flex items-center gap-2"><span>📍</span><a href="${mapsLink(a.adresse)}" target="_blank" rel="noreferrer" class="truncate text-brand-600 hover:underline">${esc(a.adresse)}</a></div>
+            <div class="flex items-center gap-2"><span>🗓️</span><span>${fmtDate(a.geplantesDatum)} · ${esc(a.geplanteStartzeit||"")} Uhr${a.geschaetzteDauer?` · ca. ${a.geschaetzteDauer} Min`:""}</span></div>
+            <div class="flex items-center gap-2"><span>👷</span><div class="flex flex-wrap gap-1">${namen.length?namen.map(n=>`<span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700"><span class="flex h-4 w-4 items-center justify-center rounded-full bg-gray-300 text-[9px] font-bold text-gray-700">${initials(n)}</span>${esc(n)}</span>`).join(""):`<span class="text-gray-400">Niemand zugewiesen</span>`}</div></div>
+          </div>
+          ${a.notizen?`<div class="mt-3 ml-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800"><span class="font-medium">Hinweis:</span> ${esc(a.notizen)}</div>`:""}
+          ${(a.checkInTime||a.checkOutTime)?`<div class="mt-3 ml-2 grid grid-cols-3 gap-2 rounded-lg bg-gray-50 px-3 py-2 text-center text-xs">
+            <div><div class="text-gray-400">Kommen</div><div class="font-semibold text-gray-700">${fmtTime(a.checkInTime)}</div></div>
+            <div><div class="text-gray-400">Gehen</div><div class="font-semibold text-gray-700">${fmtTime(a.checkOutTime)}</div></div>
+            <div><div class="text-gray-400">Dauer</div><div class="font-semibold text-gray-700">${fmtDur(a.checkInTime,a.checkOutTime)}</div></div></div>`:""}
+          ${a.status===STATUS.NICHT_ERLEDIGT?`<div class="mt-3 ml-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm"><div class="font-semibold text-red-700">⚠️ Nicht erledigt</div>${a.abschlussKommentar?`<p class="mt-0.5 text-red-700">${esc(a.abschlussKommentar)}</p>`:""}</div>`:""}
+          ${a.fotoUrl?`<a href="${esc(a.fotoUrl)}" target="_blank" rel="noreferrer" class="mt-3 ml-2 inline-block"><img src="${esc(a.fotoUrl)}" alt="Nachweis" class="h-20 w-20 rounded-lg object-cover ring-1 ring-gray-200" /></a>`:""}
+          <div class="mt-4 flex items-center gap-2 border-t border-gray-100 pl-2 pt-3">
+            <button data-action="edit" data-id="${a.id}" class="btn-secondary px-3 py-1.5 text-xs">Bearbeiten</button>
+            <button data-action="del" data-id="${a.id}" class="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50">Löschen</button>
+          </div>
+        </div>`;
+      }
+
+      async function handleDelete(a) {
+        if (!a) return;
+        if (!confirm(`Auftrag „${a.kunde}" wirklich löschen?`)) return;
+        try { await deleteDoc(doc(db,"auftraege",a.id)); } catch(e){ console.error(e); alert("Löschen fehlgeschlagen."); }
+      }
+
+      // ---------- Auftrag-Modal (Neu/Bearbeiten) ----------
+      function openAuftragModal(a) {
+        const isEdit = !!a;
+        const aktive = state.arbeiter.filter(x=>x.active!==false);
+        const istVor = a ? REINIGUNGSARTEN.includes(a.reinigungsart) : true;
+        const sel = a ? (a.zugewieseneArbeiter||[]) : [];
+        const f = {
+          kunde:a?.kunde||"", adresse:a?.adresse||"",
+          art: a ? (istVor?a.reinigungsart:"Sonstiges") : REINIGUNGSARTEN[0],
+          artFrei: a && !istVor ? a.reinigungsart : "",
+          datum: a ? (ymd(a.geplantesDatum)||todayYMD()) : todayYMD(),
+          zeit: a?.geplanteStartzeit||"08:00",
+          dauer: String(a?.geschaetzteDauer||"60"),
+          prio: a?.prioritaet||"normal",
+          notizen: a?.notizen||"",
+        };
+
+        $modal.innerHTML = `
+          <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4">
+            <div class="flex max-h-[95vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
+              <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+                <h2 class="text-lg font-semibold text-gray-900">${isEdit?"Auftrag bearbeiten":"Neuer Auftrag"}</h2>
+                <button data-m="close" class="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">✕</button>
+              </div>
+              <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+                <div id="mErr" class="hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-100"></div>
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div><label class="label">Kunde / Objektname *</label><input id="mKunde" class="input" value="${esc(f.kunde)}" placeholder="z.B. Bürohaus Lindenallee" /></div>
+                  <div><label class="label">Priorität</label><select id="mPrio" class="input"><option value="normal" ${f.prio==="normal"?"selected":""}>Normal</option><option value="dringend" ${f.prio==="dringend"?"selected":""}>Dringend</option></select></div>
+                </div>
+                <div><label class="label">Adresse *</label><input id="mAdresse" class="input" value="${esc(f.adresse)}" placeholder="Straße Nr., PLZ Ort" /></div>
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div><label class="label">Art der Reinigung *</label><select id="mArt" class="input">${REINIGUNGSARTEN.map(x=>`<option ${f.art===x?"selected":""}>${x}</option>`).join("")}</select></div>
+                  <div id="mArtFreiWrap" class="${f.art==="Sonstiges"?"":"hidden"}"><label class="label">Freitext *</label><input id="mArtFrei" class="input" value="${esc(f.artFrei)}" placeholder="z.B. Bauschlussreinigung" /></div>
+                </div>
+                <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                  <div><label class="label">Datum *</label><input id="mDatum" type="date" class="input" value="${f.datum}" /></div>
+                  <div><label class="label">Startzeit *</label><input id="mZeit" type="time" class="input" value="${f.zeit}" /></div>
+                  <div><label class="label">Dauer (Min)</label><input id="mDauer" type="number" min="0" step="15" class="input" value="${esc(f.dauer)}" /></div>
+                </div>
+                <div>
+                  <label class="label">Zugewiesene Arbeiter *</label>
+                  ${aktive.length?`<div id="mArbeiter" class="flex flex-wrap gap-2">${aktive.map(x=>{const on=sel.includes(x.id);return `<button type="button" data-uid="${x.id}" class="arb flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition ${on?"border-brand-500 bg-brand-50 text-brand-700":"border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}"><span class="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${on?"bg-brand-500 text-white":"bg-gray-200 text-gray-600"}">${initials(x.name)}</span>${esc(x.name)}</button>`}).join("")}</div>`:`<p class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">Noch keine aktiven Arbeiter. Lege zuerst unter „Arbeiter" welche an.</p>`}
+                </div>
+                <div><label class="label">Notizen / Sonderhinweise</label><textarea id="mNotizen" class="input min-h-[80px] resize-y" placeholder="z.B. Schlüssel beim Hausmeister">${esc(f.notizen)}</textarea></div>
+              </div>
+              <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
+                <button data-m="close" class="btn-secondary">Abbrechen</button>
+                <button data-m="save" class="btn-primary">${isEdit?"Änderungen speichern":"Auftrag anlegen"}</button>
+              </div>
+            </div>
+          </div>`;
+
+        const selected = new Set(sel);
+        $modal.querySelector("#mArt").addEventListener("change", e => {
+          $modal.querySelector("#mArtFreiWrap").classList.toggle("hidden", e.target.value!=="Sonstiges");
+        });
+        $modal.querySelectorAll(".arb").forEach(b => b.addEventListener("click", () => {
+          const uid=b.dataset.uid; const on=selected.has(uid);
+          if(on) selected.delete(uid); else selected.add(uid);
+          b.className = `arb flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition ${!on?"border-brand-500 bg-brand-50 text-brand-700":"border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}`;
+          b.firstElementChild.className = `flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${!on?"bg-brand-500 text-white":"bg-gray-200 text-gray-600"}`;
+        }));
+        $modal.querySelectorAll('[data-m="close"]').forEach(b=>b.addEventListener("click",closeModal));
+        $modal.querySelector('[data-m="save"]').addEventListener("click", () => saveAuftrag(a, selected));
+      }
+
+      async function saveAuftrag(a, selected) {
+        const g = id => $modal.querySelector(id);
+        const err = m => { const e=g("#mErr"); e.textContent=m; e.classList.remove("hidden"); };
+        const kunde=g("#mKunde").value.trim(), adresse=g("#mAdresse").value.trim();
+        const art=g("#mArt").value, artFrei=g("#mArtFrei")?.value.trim()||"";
+        const datum=g("#mDatum").value, zeit=g("#mZeit").value, dauer=g("#mDauer").value;
+        const prio=g("#mPrio").value, notizen=g("#mNotizen").value.trim();
+        const arbeiter=[...selected];
+
+        if(!kunde) return err("Bitte Kunde / Objektname angeben.");
+        if(!adresse) return err("Bitte eine Adresse angeben.");
+        if(art==="Sonstiges" && !artFrei) return err("Bitte die Art der Reinigung im Freitext angeben.");
+        if(arbeiter.length===0) return err("Bitte mindestens einen Arbeiter zuweisen.");
+
+        const saveBtn=$modal.querySelector('[data-m="save"]'); saveBtn.disabled=true; saveBtn.textContent="Speichern …";
+        try {
+          const [h,m] = zeit.split(":").map(Number);
+          const dt = new Date(datum); dt.setHours(h||0,m||0,0,0);
+          const payload = {
+            kunde, adresse, reinigungsart: art==="Sonstiges"?artFrei:art,
+            notizen, prioritaet:prio, geplantesDatum: Timestamp.fromDate(dt),
+            geplanteStartzeit: zeit, geschaetzteDauer: Number(dauer)||0,
+            zugewieseneArbeiter: arbeiter,
+          };
+          if (a) {
+            await updateDoc(doc(db,"auftraege",a.id), payload);
+          } else {
+            await addDoc(collection(db,"auftraege"), {
+              ...payload, status:STATUS.GEPLANT, checkInTime:null, checkOutTime:null,
+              abschlussErgebnis:null, abschlussKommentar:"", fotoUrl:"",
+              erstelltVon: state.user.uid, erstelltAm: serverTimestamp(),
+            });
+          }
+          closeModal();
+        } catch(e) { console.error(e); err("Speichern fehlgeschlagen."); saveBtn.disabled=false; saveBtn.textContent=a?"Änderungen speichern":"Auftrag anlegen"; }
+      }
+
+      // ---------- Arbeiterverwaltung ----------
+      function renderArbeiterverwaltung() {
+        const stats = {};
+        state.auftraege.forEach(a => (a.zugewieseneArbeiter||[]).forEach(uid => {
+          if(!stats[uid]) stats[uid]={g:0,e:0};
+          stats[uid].g++; if(a.status===STATUS.ERLEDIGT) stats[uid].e++;
+        }));
+        const arb = [...state.arbeiter].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+
+        const rows = arb.length ? arb.map(a=>{
+          const aktiv=a.active!==false; const s=stats[a.id]||{g:0,e:0};
+          return `<div class="flex flex-wrap items-center gap-4 p-4">
+            <div class="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold ${aktiv?"bg-brand-100 text-brand-700":"bg-gray-200 text-gray-400"}">${initials(a.name)}</div>
+            <div class="min-w-0 flex-1"><div class="flex items-center gap-2"><span class="font-semibold text-gray-900">${esc(a.name)}</span>${!aktiv?`<span class="rounded-full bg-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-500">Deaktiviert</span>`:""}</div><div class="truncate text-sm text-gray-500">${esc(a.email)}</div></div>
+            <div class="text-right text-sm"><div class="font-semibold text-gray-900">${s.e} / ${s.g}</div><div class="text-xs text-gray-400">erledigt / gesamt</div></div>
+            <button data-action="toggle" data-id="${a.id}" class="${aktiv?"rounded-lg px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50":"btn-secondary px-3 py-1.5 text-sm"}">${aktiv?"Deaktivieren":"Aktivieren"}</button>
+          </div>`;
+        }).join('<div class="border-t border-gray-100"></div>') : emptyState("👷","Noch keine Arbeiter","Lege deine erste Reinigungskraft an, um Aufträge zuweisen zu können.");
+
+        $app.innerHTML = shell(`
+          <div class="mx-auto max-w-4xl">
+            <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <div><h1 class="text-2xl font-bold text-gray-900">Arbeiter</h1><p class="text-sm text-gray-500">Reinigungskräfte anlegen und verwalten</p></div>
+              <button data-action="toggleForm" class="btn-primary">${state.showArbForm?"Abbrechen":"+ Arbeiter anlegen"}</button>
+            </div>
+            <div id="arbOk" class="hidden mb-4 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700 ring-1 ring-green-100"></div>
+            ${state.showArbForm?`<form id="arbForm" class="card mb-6 space-y-4 p-5">
+              <div id="arbErr" class="hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-100"></div>
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div><label class="label">Name *</label><input id="anName" class="input" placeholder="Max Mustermann" /></div>
+                <div><label class="label">E-Mail (Login) *</label><input id="anEmail" type="email" class="input" placeholder="max@firma.de" /></div>
+                <div><label class="label">Passwort *</label><input id="anPass" type="text" class="input" placeholder="min. 6 Zeichen" /></div>
+              </div>
+              <p class="text-xs text-gray-400">Der Arbeiter meldet sich später mit dieser E-Mail und diesem Passwort an.</p>
+              <div class="flex justify-end"><button class="btn-primary" type="submit">Arbeiter anlegen</button></div>
+            </form>`:""}
+            <div class="card divide-y-0">${rows}</div>
+          </div>
+        `, "arbeiter");
+
+        bindShell();
+        $app.querySelector('[data-action="toggleForm"]').addEventListener("click",()=>{state.showArbForm=!state.showArbForm; renderDisponent();});
+        $app.querySelectorAll('[data-action="toggle"]').forEach(b=>b.addEventListener("click",()=>toggleArbeiter(state.arbeiter.find(a=>a.id===b.dataset.id))));
+        const form=$app.querySelector("#arbForm");
+        if(form) form.addEventListener("submit", createArbeiter);
+      }
+
+      async function toggleArbeiter(a) {
+        try { await updateDoc(doc(db,"users",a.id), { active: !(a.active!==false) }); }
+        catch(e){ console.error(e); alert("Status ändern fehlgeschlagen."); }
+      }
+
+      async function createArbeiter(e) {
+        e.preventDefault();
+        const name=$app.querySelector("#anName").value.trim();
+        const email=$app.querySelector("#anEmail").value.trim();
+        const pass=$app.querySelector("#anPass").value;
+        const errBox=$app.querySelector("#arbErr");
+        const err=m=>{errBox.textContent=m; errBox.classList.remove("hidden");};
+        if(!name) return err("Bitte einen Namen eingeben.");
+        if(pass.length<6) return err("Das Passwort muss mind. 6 Zeichen haben.");
+
+        const btn=e.submitter; btn.disabled=true; btn.textContent="Anlegen …";
+        // Zweite, temporäre App-Instanz, damit der Admin eingeloggt bleibt
+        const { initializeApp:initApp, deleteApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+        const { getAuth:getAuth2, createUserWithEmailAndPassword:createUser2 } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+        const { firebaseConfig } = await import("./firebase-config.js");
+        const secondary = initApp(firebaseConfig, "Secondary-"+Date.now());
+        try {
+          const cred = await createUser2(getAuth2(secondary), email, pass);
+          await setDoc(doc(db,"users",cred.user.uid), { uid:cred.user.uid, name, email, role:"arbeiter", active:true });
+          state.showArbForm=false; renderDisponent();
+          const ok=$app.querySelector("#arbOk"); if(ok){ ok.textContent=`Arbeiter „${name}" wurde angelegt.`; ok.classList.remove("hidden"); }
+        } catch(e2){ console.error(e2); err(authErr(e2.code)); btn.disabled=false; btn.textContent="Arbeiter anlegen"; }
+        finally { await deleteApp(secondary).catch(()=>{}); }
+      }
+
+      // ---------- Disponent-Shell (Navigation + Logout) ----------
+      function shell(content, active) {
+        const navItem = (key,icon,label) => `<button data-nav="${key}" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${active===key?"bg-brand-500 text-white":"text-gray-300 hover:bg-ink-800 hover:text-white"}"><span>${icon}</span>${label}</button>`;
+        const mNav = (key,icon,label) => `<button data-nav="${key}" class="flex-1 rounded-lg px-3 py-2 text-center text-sm font-medium ${active===key?"bg-brand-500 text-white":"text-gray-300"}">${icon} ${label}</button>`;
+        return `<div class="flex min-h-screen bg-gray-100">
+          <aside class="hidden w-64 flex-col bg-ink-900 text-gray-300 md:flex">
+            <div class="flex items-center gap-3 px-6 py-5"><div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500 text-sm font-extrabold text-white">G&B</div><div><div class="text-sm font-semibold text-white">G&B Reinigung</div><div class="text-xs text-gray-400">Disposition</div></div></div>
+            <nav class="flex-1 space-y-1 px-3 py-4">${navItem("dashboard","📋","Dashboard")}${navItem("arbeiter","👷","Arbeiter")}</nav>
+            <div class="border-t border-ink-800 p-3">
+              <div class="flex items-center gap-3 rounded-lg px-3 py-2"><div class="flex h-8 w-8 items-center justify-center rounded-full bg-ink-800 text-xs font-semibold text-white">${initials(state.profile?.name)}</div><div class="min-w-0 flex-1"><div class="truncate text-sm font-medium text-white">${esc(state.profile?.name||"")}</div><div class="truncate text-xs text-gray-400">Disponent</div></div></div>
+              <button data-action="logout" class="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm text-gray-400 transition hover:bg-ink-800 hover:text-white">Abmelden</button>
+            </div>
+          </aside>
+          <div class="flex min-w-0 flex-1 flex-col">
+            <header class="flex items-center justify-between bg-ink-900 px-4 py-3 md:hidden"><div class="flex items-center gap-2 text-white"><div class="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-xs font-extrabold">G&B</div><span class="font-semibold">Disposition</span></div><button data-action="logout" class="text-sm text-gray-300">Abmelden</button></header>
+            <nav class="flex gap-1 bg-ink-800 px-2 py-2 md:hidden">${mNav("dashboard","📋","Dashboard")}${mNav("arbeiter","👷","Arbeiter")}</nav>
+            <main class="flex-1 overflow-y-auto p-4 md:p-8">${content}</main>
+          </div>
+        </div>`;
+      }
+      function bindShell() {
+        $app.querySelectorAll("[data-nav]").forEach(b=>b.addEventListener("click",()=>{ state.nav=b.dataset.nav; if(b.dataset.nav==="arbeiter") state.showArbForm=false; renderDisponent(); }));
+        $app.querySelectorAll('[data-action="logout"]').forEach(b=>b.addEventListener("click",()=>signOut(auth)));
+      }
+      function emptyState(icon,title,sub) {
+        return `<div class="col-span-full flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white/60 px-6 py-16 text-center"><div class="mb-3 text-4xl">${icon}</div><h3 class="text-base font-semibold text-gray-800">${esc(title)}</h3><p class="mt-1 max-w-sm text-sm text-gray-500">${esc(sub)}</p></div>`;
+      }
+
+      // ===========================================================
+      //  ARBEITER (Mobile-First)
+      // ===========================================================
+      function startArbeiter() {
+        if (!unsubAuftraege) {
+          unsubAuftraege = onSnapshot(
+            query(collection(db,"auftraege"), where("zugewieseneArbeiter","array-contains", state.user.uid)),
+            (snap) => { state.auftraege = snap.docs.map(d=>({id:d.id,...d.data()})); if(state.profile?.role==="arbeiter") renderArbeiter(); },
+            (e)=>console.error(e)
+          );
+        }
+        renderArbeiter();
+      }
+
+      function renderArbeiter() {
+        const t = todayYMD();
+        const sortFn=(a,b)=>(toDate(a.geplantesDatum)?.getTime()||0)-(toDate(b.geplantesDatum)?.getTime()||0);
+        const heute=state.auftraege.filter(a=>ymd(a.geplantesDatum)===t).sort(sortFn);
+        const weitere=state.auftraege.filter(a=>ymd(a.geplantesDatum)!==t).sort(sortFn);
+
+        const section=(title,list,emptyHint)=>`<div><h2 class="mb-3 px-1 text-sm font-bold uppercase tracking-wide text-gray-400">${title}</h2>${list.length?`<div class="space-y-4">${list.map(arbeiterCard).join("")}</div>`:(emptyHint?`<p class="rounded-xl border border-dashed border-gray-300 bg-white/60 px-4 py-8 text-center text-sm text-gray-400">${emptyHint}</p>`:"")}</div>`;
+
+        const body = state.auftraege.length===0
+          ? `<div class="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white/60 px-6 py-16 text-center"><div class="mb-3 text-4xl">☀️</div><h3 class="text-base font-semibold text-gray-800">Keine Aufträge</h3><p class="mt-1 text-sm text-gray-500">Dir sind aktuell keine Aufträge zugewiesen.</p></div>`
+          : `<div class="space-y-6">${section("Heute",heute,"Heute keine Aufträge.")}${weitere.length?section("Weitere Termine",weitere,""):""}</div>`;
+
+        $app.innerHTML = `<div class="min-h-screen bg-gray-100">
+          <header class="sticky top-0 z-10 flex items-center justify-between bg-ink-900 px-4 py-3 text-white shadow">
+            <div class="flex items-center gap-2"><div class="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-xs font-extrabold">G&B</div><span class="font-semibold">Meine Aufträge</span></div>
+            <div class="flex items-center gap-3"><div class="flex h-8 w-8 items-center justify-center rounded-full bg-ink-800 text-xs font-semibold">${initials(state.profile?.name)}</div><button data-action="logout" class="text-sm font-medium text-gray-300 hover:text-white">Abmelden</button></div>
+          </header>
+          <main class="mx-auto max-w-lg px-4 py-5">${body}</main>
+        </div>`;
+
+        $app.querySelectorAll('[data-action="logout"]').forEach(b=>b.addEventListener("click",()=>signOut(auth)));
+        $app.querySelectorAll('[data-action="checkin"]').forEach(b=>b.addEventListener("click",()=>checkIn(b.dataset.id)));
+        $app.querySelectorAll('[data-action="fertig"]').forEach(b=>b.addEventListener("click",()=>openAbschluss(state.auftraege.find(a=>a.id===b.dataset.id))));
+      }
+
+      function arbeiterCard(a) {
+        const fertig=a.status===STATUS.ERLEDIGT||a.status===STATUS.NICHT_ERLEDIGT;
+        return `<div class="card overflow-hidden">
+          <div class="p-4">
+            <div class="flex items-start justify-between gap-2"><div><h3 class="text-lg font-bold text-gray-900">${esc(a.kunde)}</h3><p class="text-sm text-gray-500">${esc(a.reinigungsart)}</p></div>${badge(a.status)}</div>
+            <div class="mt-3 space-y-2 text-[15px] text-gray-700">
+              <a href="${mapsLink(a.adresse)}" target="_blank" rel="noreferrer" class="flex items-center gap-2 font-medium text-brand-600"><span>📍</span><span class="underline-offset-2 hover:underline">${esc(a.adresse)}</span></a>
+              <div class="flex items-center gap-2"><span>🕐</span><span>${fmtDate(a.geplantesDatum)} · ${esc(a.geplanteStartzeit||"")} Uhr</span></div>
+            </div>
+            ${a.notizen?`<div class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800"><span class="font-semibold">Hinweis:</span> ${esc(a.notizen)}</div>`:""}
+            ${a.checkInTime?`<div class="mt-3 text-sm text-gray-500">Angekommen: ${fmtTime(a.checkInTime)}${a.checkOutTime?` · Gegangen: ${fmtTime(a.checkOutTime)}`:""}</div>`:""}
+            ${a.status===STATUS.NICHT_ERLEDIGT&&a.abschlussKommentar?`<div class="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"><span class="font-semibold">Nicht erledigt:</span> ${esc(a.abschlussKommentar)}</div>`:""}
+          </div>
+          ${!fertig?`<div class="border-t border-gray-100 p-3">${a.status===STATUS.GEPLANT
+            ? `<button data-action="checkin" data-id="${a.id}" class="w-full rounded-xl bg-brand-500 py-4 text-lg font-extrabold text-white shadow-sm transition active:scale-[.98] hover:bg-brand-600">✅ ANGEKOMMEN</button>`
+            : `<button data-action="fertig" data-id="${a.id}" class="w-full rounded-xl bg-green-600 py-4 text-lg font-extrabold text-white shadow-sm transition active:scale-[.98] hover:bg-green-700">🏁 FERTIG / GEHE</button>`}</div>`
+            : `<div class="border-t border-gray-100 bg-gray-50 p-3 text-center text-sm font-semibold text-gray-500">Auftrag abgeschlossen</div>`}
+        </div>`;
+      }
+
+      async function checkIn(id) {
+        try { await updateDoc(doc(db,"auftraege",id), { status:STATUS.EINGECHECKT, checkInTime:serverTimestamp() }); }
+        catch(e){ console.error(e); alert("Check-in fehlgeschlagen. Bitte erneut versuchen."); }
+      }
+
+      // ---------- Abschluss-Dialog (Check-out) ----------
+      function openAbschluss(a) {
+        if(!a) return;
+        let ergebnis=null;
+        $modal.innerHTML = `
+          <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4">
+            <div class="w-full max-w-lg rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl">
+              <div class="mb-1 flex items-center justify-between"><h2 class="text-lg font-bold text-gray-900">Auftrag abschließen</h2><button data-m="close" class="p-1 text-gray-400">✕</button></div>
+              <p class="mb-4 text-sm text-gray-500">${esc(a.kunde)}</p>
+              <div id="abErr" class="hidden mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"></div>
+              <div class="grid grid-cols-2 gap-3">
+                <button data-erg="erledigt" class="ergBtn rounded-xl border-2 border-gray-200 py-5 text-base font-bold text-gray-600">✅ Erledigt</button>
+                <button data-erg="nicht_erledigt" class="ergBtn rounded-xl border-2 border-gray-200 py-5 text-base font-bold text-gray-600">⚠️ Nicht erledigt</button>
+              </div>
+              <div id="kommentarWrap" class="mt-4 hidden">
+                <label class="label" id="kommentarLabel">Kommentar</label>
+                <textarea id="abKommentar" class="input min-h-[80px] resize-y"></textarea>
+              </div>
+              <div class="mt-4">
+                <label class="label">Foto-Nachweis (optional)</label>
+                <input id="abFoto" type="file" accept="image/*" capture="environment" class="block w-full text-sm text-gray-500 file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-brand-700" />
+              </div>
+              <div class="mt-6 flex gap-3"><button data-m="close" class="btn-secondary flex-1 py-3">Abbrechen</button><button data-m="save" class="btn-primary flex-1 py-3 text-base">Abschließen</button></div>
+            </div>
+          </div>`;
+
+        const wrap=$modal.querySelector("#kommentarWrap");
+        const label=$modal.querySelector("#kommentarLabel");
+        const ta=$modal.querySelector("#abKommentar");
+        $modal.querySelectorAll(".ergBtn").forEach(b=>b.addEventListener("click",()=>{
+          ergebnis=b.dataset.erg;
+          $modal.querySelectorAll(".ergBtn").forEach(x=>{
+            const on=x.dataset.erg===ergebnis;
+            const ok=x.dataset.erg==="erledigt";
+            x.className=`ergBtn rounded-xl border-2 py-5 text-base font-bold transition ${on?(ok?"border-green-600 bg-green-50 text-green-700":"border-red-600 bg-red-50 text-red-700"):"border-gray-200 text-gray-600"}`;
+          });
+          wrap.classList.remove("hidden");
+          if(ergebnis==="nicht_erledigt"){ label.textContent="Grund (Pflicht) *"; ta.placeholder="z.B. Niemand vor Ort, kein Schlüssel erhalten …"; }
+          else { label.textContent="Kommentar (optional)"; ta.placeholder="z.B. Alles sauber, Schlüssel zurückgegeben"; }
+        }));
+        $modal.querySelectorAll('[data-m="close"]').forEach(b=>b.addEventListener("click",closeModal));
+        $modal.querySelector('[data-m="save"]').addEventListener("click",()=>saveAbschluss(a, ()=>ergebnis));
+      }
+
+      async function saveAbschluss(a, getErg) {
+        const ergebnis=getErg();
+        const errBox=$modal.querySelector("#abErr");
+        const err=m=>{errBox.textContent=m; errBox.classList.remove("hidden");};
+        const kommentar=$modal.querySelector("#abKommentar").value.trim();
+        const file=$modal.querySelector("#abFoto").files?.[0]||null;
+        if(!ergebnis) return err("Bitte „Erledigt“ oder „Nicht erledigt“ wählen.");
+        if(ergebnis==="nicht_erledigt" && !kommentar) return err("Bitte einen Grund angeben.");
+
+        const btn=$modal.querySelector('[data-m="save"]'); btn.disabled=true; btn.textContent="Speichern …";
+        try {
+          let fotoUrl="";
+          if(file){
+            const r=ref(storage, `nachweise/${a.id}/${Date.now()}_${file.name}`);
+            await uploadBytes(r,file); fotoUrl=await getDownloadURL(r);
+          }
+          await updateDoc(doc(db,"auftraege",a.id), {
+            status:ergebnis, abschlussErgebnis:ergebnis, abschlussKommentar:kommentar,
+            checkOutTime:serverTimestamp(), ...(fotoUrl?{fotoUrl}:{}),
+          });
+          closeModal();
+        } catch(e){ console.error(e); err("Speichern fehlgeschlagen."); btn.disabled=false; btn.textContent="Abschließen"; }
+      }
+
+      // Start
+      renderLoading("Lädt …");
+    </script>
+  </body>
+</html>
