@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#161b26" />
+    <title>G&B Reinigung – Kalender</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: { extend: {
+          colors: {
+            brand: { 50:"#eef4ff",100:"#d9e6ff",200:"#bcd3ff",300:"#8eb6ff",400:"#598dff",500:"#3366ff",600:"#1f4ce6",700:"#1a3cba",800:"#1c3596",900:"#1d3177" },
+            ink: { 800:"#1e2533", 900:"#161b26", 950:"#0e1119" },
+          },
+          fontFamily: { sans: ["Inter","system-ui","sans-serif"] },
+        } },
+      };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+    <style>
+      html, body, #app { height: 100%; }
+      body { font-family: Inter, system-ui, sans-serif; background:#f3f4f6; margin:0; -webkit-font-smoothing:antialiased; }
+      .btn-primary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; border-radius:.5rem; padding:.5rem 1rem; font-size:.875rem; font-weight:600; transition:all .15s; cursor:pointer; border:none; background:#3366ff; color:#fff; box-shadow:0 1px 2px rgba(0,0,0,.05); }
+      .btn-primary:hover { background:#1f4ce6; } .btn-primary:active { transform:scale(.98); } .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+      .btn-secondary { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; border-radius:.5rem; padding:.45rem .8rem; font-size:.875rem; font-weight:600; transition:all .15s; cursor:pointer; background:#fff; color:#374151; border:1px solid #d1d5db; }
+      .btn-secondary:hover { background:#f9fafb; }
+      .input { width:100%; border-radius:.5rem; border:1px solid #d1d5db; background:#fff; padding:.5rem .75rem; font-size:16px; color:#111827; outline:none; transition:all .15s; box-sizing:border-box; }
+      .input:focus { border-color:#3366ff; box-shadow:0 0 0 2px #d9e6ff; }
+      .label { display:block; margin-bottom:.25rem; font-size:.875rem; font-weight:500; color:#374151; }
+      .card { border-radius:.75rem; border:1px solid #e5e7eb; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.05); }
+      .seg { padding:.4rem .75rem; font-size:.85rem; font-weight:600; color:#6b7280; cursor:pointer; border-radius:.45rem; }
+      .seg.active { background:#fff; color:#111827; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+      .ev { position:absolute; overflow:hidden; border-radius:.375rem; border:1px solid; padding:1px 5px; font-size:11px; line-height:1.15; cursor:pointer; }
+      .ev:hover { filter:brightness(.97); z-index:20 !important; }
+    </style>
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <div id="modal-root"></div>
+
+    <script type="module">
+      import { auth, db, ADMIN_EMAIL } from "./firebase-config.js";
+      import {
+        onAuthStateChanged, signInWithEmailAndPassword,
+        createUserWithEmailAndPassword, signOut,
+      } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+      import {
+        collection, addDoc, updateDoc, deleteDoc, doc,
+        onSnapshot, query, serverTimestamp,
+      } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+      // ---------- Konstanten ----------
+      const HOUR_PX = 44;                 // Höhe einer Stunde im Raster
+      const MONATE = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
+      const WTAGE = ["Mo","Di","Mi","Do","Fr","Sa","So"];
+      const WTAGE_LANG = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"];
+      const REINIGUNGSARTEN = ["Normale Reinigung","Ferienwohnung","Fensterreinigung","Treppenhausreinigung","Grundreinigung","Außenreinigung","Sonstiges"];
+
+      // ---------- Helfer ----------
+      const esc = (s="") => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+      const pad = n => String(n).padStart(2,"0");
+      const ymd = (y,m,d) => `${y}-${pad(m+1)}-${pad(d)}`;
+      const ymdD = dt => ymd(dt.getFullYear(), dt.getMonth(), dt.getDate());
+      const parseYMD = s => { const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); };
+      const todayStr = () => ymdD(new Date());
+      const mondayIdx = dt => (dt.getDay()+6)%7;        // Mo=0 … So=6
+      const weekStart = dt => { const d=new Date(dt); d.setHours(0,0,0,0); d.setDate(d.getDate()-mondayIdx(d)); return d; };
+      const addDays = (dt,n) => { const d=new Date(dt); d.setDate(d.getDate()+n); return d; };
+      // ISO-Kalenderwoche (KW)
+      const isoWeek = dt => {
+        const d = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate()));
+        const dayNum = (d.getUTCDay()+6)%7;
+        d.setUTCDate(d.getUTCDate()-dayNum+3);
+        const firstThu = new Date(Date.UTC(d.getUTCFullYear(),0,4));
+        const fThuNum = (firstThu.getUTCDay()+6)%7;
+        firstThu.setUTCDate(firstThu.getUTCDate()-fThuNum+3);
+        return 1 + Math.round((d - firstThu)/(7*24*3600*1000));
+      };
+      const parseMin = t => { if(!t) return null; const [h,m]=t.split(":").map(Number); return h*60+(m||0); };
+      const minToTime = m => `${pad(Math.floor(m/60))}:${pad(m%60)}`;
+      const mapsLink = a => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a||"")}`;
+      const fmtLangDatum = s => parseYMD(s).toLocaleDateString("de-DE",{weekday:"long",day:"2-digit",month:"long",year:"numeric"});
+      const authErr = code => ({
+        "auth/invalid-email":"Ungültige E-Mail-Adresse.","auth/wrong-password":"Falsches Passwort.",
+        "auth/invalid-credential":"E-Mail oder Passwort ist falsch.","auth/too-many-requests":"Zu viele Versuche. Bitte später erneut.",
+      }[code] || "Anmeldung fehlgeschlagen. Bitte erneut versuchen.");
+
+      const $app = document.getElementById("app");
+      const $modal = document.getElementById("modal-root");
+      const closeModal = () => { $modal.innerHTML = ""; };
+
+      // ---------- Zustand ----------
+      const state = { user:null, termine:[], view:"woche", cursor:new Date() };
+      let unsubTermine = null;
+
+      // ===========================================================
+      //  Auth
+      // ===========================================================
+      onAuthStateChanged(auth, (user) => {
+        if (unsubTermine) { unsubTermine(); unsubTermine = null; }
+        state.user = user; state.termine = [];
+        if (!user) { renderLogin(); return; }
+        unsubTermine = onSnapshot(query(collection(db,"termine")), (snap) => {
+          state.termine = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+          renderApp();
+        }, (e)=>console.error(e));
+        renderApp();
+      });
+
+      function renderLogin(error="") {
+        $app.innerHTML = `
+          <div class="relative flex min-h-screen items-center justify-center bg-ink-950 p-4">
+            <div class="pointer-events-none absolute inset-0 bg-gradient-to-br from-ink-900 via-ink-950 to-black"></div>
+            <div class="relative w-full max-w-sm">
+              <div class="mb-8 text-center">
+                <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-500 text-xl font-extrabold text-white shadow-lg">G&B</div>
+                <h1 class="text-2xl font-bold text-white">G&B Reinigung</h1>
+                <p class="mt-1 text-sm text-gray-400">Gemeinsamer Auftrags-Kalender</p>
+              </div>
+              <form id="loginForm" class="rounded-2xl bg-white p-6 shadow-2xl">
+                <h2 class="mb-5 text-lg font-semibold text-gray-900">Anmelden</h2>
+                <div id="loginError" class="${error?"":"hidden"} mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">${esc(error)}</div>
+                <div class="mb-4"><label class="label" for="email">E-Mail</label><input id="email" type="email" required class="input" value="${ADMIN_EMAIL}" /></div>
+                <div class="mb-6"><label class="label" for="password">Passwort</label><input id="password" type="password" required class="input" placeholder="••••••••" autocomplete="current-password" /></div>
+                <button id="loginBtn" type="submit" class="btn-primary w-full py-2.5">Anmelden</button>
+              </form>
+              <p class="mt-6 text-center text-xs text-gray-500">© ${new Date().getFullYear()} G&B Reinigung</p>
+            </div>
+          </div>`;
+        document.getElementById("loginForm").addEventListener("submit", handleLogin);
+      }
+      async function handleLogin(e) {
+        e.preventDefault();
+        const email = document.getElementById("email").value.trim();
+        const pw = document.getElementById("password").value;
+        const btn = document.getElementById("loginBtn");
+        const errBox = document.getElementById("loginError");
+        const showErr = m => { errBox.textContent=m; errBox.classList.remove("hidden"); };
+        btn.disabled = true; btn.textContent = "Anmelden …";
+        try { await signInWithEmailAndPassword(auth, email, pw); }
+        catch (err) {
+          if (email === ADMIN_EMAIL && (err.code==="auth/user-not-found" || err.code==="auth/invalid-credential")) {
+            try { await createUserWithEmailAndPassword(auth, email, pw); return; }
+            catch (err2) { showErr(err2.code==="auth/email-already-in-use" ? "Falsches Passwort." : authErr(err2.code)); }
+          } else { showErr(authErr(err.code)); }
+          btn.disabled = false; btn.textContent = "Anmelden";
+        }
+      }
+
+      // ===========================================================
+      //  Termine -> Vorkommen (Serien aufklappen)
+      // ===========================================================
+      const SERIE_TYPEN = ["taeglich","woechentlich","jaehrlich"];
+      function istSerie(t){ return !!(t.wiederholung && SERIE_TYPEN.includes(t.wiederholung.typ)); }
+      function istErledigt(t, dateStr){ return istSerie(t) ? (t.erledigtTage||[]).includes(dateStr) : !!t.erledigt; }
+
+      // Liefert alle Vorkommen im Bereich [von, bis] (Date-Objekte, inkl.)
+      function vorkommen(von, bis){
+        const out = [];
+        const mkOcc = (t, dateStr) => {
+          const sz = t.startzeit || t.uhrzeit || "";
+          const ez = t.endzeit || "";
+          let sMin = parseMin(sz), eMin = parseMin(ez);
+          if (sMin!==null && (eMin===null || eMin<=sMin)) eMin = sMin + 60; // Default 1h
+          return { id:t.id, termin:t, datum:dateStr, startzeit:sz, endzeit:ez,
+                   startMin:sMin, endMin:eMin, allDay: sMin===null,
+                   done:istErledigt(t,dateStr), serie:istSerie(t) };
+        };
+        for (const t of state.termine){
+          if (!istSerie(t)){
+            const d = parseYMD(t.datum);
+            if (d>=stripTime(von) && d<=stripTime(bis)) out.push(mkOcc(t, t.datum));
+          } else {
+            const typ = t.wiederholung.typ;
+            const start = parseYMD(t.datum);
+            const until = t.wiederholung.bis ? parseYMD(t.wiederholung.bis) : null;
+            const aus = t.ausnahmen || [];
+            for (let d=new Date(stripTime(von)); d<=stripTime(bis); d=addDays(d,1)){
+              if (d < start) continue;
+              if (until && d > until) continue;
+              // Trefferbedingung je Wiederholungstyp
+              if (typ === "woechentlich" && mondayIdx(d) !== t.wiederholung.wochentag) continue;
+              if (typ === "jaehrlich" && (d.getMonth() !== start.getMonth() || d.getDate() !== start.getDate())) continue;
+              // "taeglich": jeder Tag im Bereich trifft
+              const ds = ymdD(d);
+              if (aus.includes(ds)) continue;
+              out.push(mkOcc(t, ds));
+            }
+          }
+        }
+        return out;
+      }
+      const stripTime = dt => { const d=new Date(dt); d.setHours(0,0,0,0); return d; };
+      const vorkommenAm = dateStr => vorkommen(parseYMD(dateStr), parseYMD(dateStr))
+        .sort((a,b)=>(a.startMin??1e9)-(b.startMin??1e9));
+
+      // Spalten-Layout für überlappende Termine eines Tages
+      function layoutTag(items){
+        const evs = items.filter(e=>!e.allDay).sort((a,b)=>a.startMin-b.startMin || a.endMin-b.endMin);
+        let clusters=[], cur=[], curEnd=-1;
+        for (const e of evs){ if (cur.length && e.startMin>=curEnd){ clusters.push(cur); cur=[]; curEnd=-1; } cur.push(e); curEnd=Math.max(curEnd,e.endMin); }
+        if (cur.length) clusters.push(cur);
+        for (const cl of clusters){
+          const lanes=[];
+          for (const e of cl){
+            let placed=false;
+            for (let i=0;i<lanes.length;i++){ if (lanes[i]<=e.startMin){ lanes[i]=e.endMin; e.lane=i; placed=true; break; } }
+            if (!placed){ e.lane=lanes.length; lanes.push(e.endMin); }
+          }
+          for (const e of cl) e.lanes = lanes.length;
+        }
+        return evs;
+      }
+
+      // ===========================================================
+      //  Rendern
+      // ===========================================================
+      function renderApp(){
+        if (!state.user) return;
+        const titel = titelText();
+        $app.innerHTML = `
+          <div class="min-h-screen bg-gray-100">
+            <header class="flex items-center justify-between bg-ink-900 px-4 py-3 text-white shadow">
+              <div class="flex items-center gap-2"><div class="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500 text-xs font-extrabold">G&B</div><span class="font-semibold">Auftrags-Kalender</span></div>
+              <button data-action="logout" class="text-sm font-medium text-gray-300 hover:text-white">Abmelden</button>
+            </header>
+            <main class="mx-auto max-w-6xl p-3 md:p-5">
+              <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                  <button data-action="heute" class="btn-secondary">Heute</button>
+                  <button data-action="prev" class="btn-secondary px-2.5">‹</button>
+                  <button data-action="next" class="btn-secondary px-2.5">›</button>
+                  <h1 class="ml-1 text-lg font-bold text-gray-900 md:text-xl">${titel}</h1>
+                </div>
+                <div class="flex items-center gap-2">
+                  <div class="flex gap-1 rounded-lg bg-gray-200 p-1">
+                    <button data-view="tag" class="seg ${state.view==="tag"?"active":""}">Tag</button>
+                    <button data-view="woche" class="seg ${state.view==="woche"?"active":""}">Woche</button>
+                    <button data-view="monat" class="seg ${state.view==="monat"?"active":""}">Monat</button>
+                  </div>
+                  <button data-action="neu" class="btn-primary">+ Termin</button>
+                </div>
+              </div>
+              <div id="calBody">${state.view==="monat" ? renderMonat() : renderZeitraster(state.view==="tag" ? [new Date(state.cursor)] : wocheTage())}</div>
+            </main>
+          </div>`;
+
+        // Header-Events
+        $app.querySelector('[data-action="logout"]').addEventListener("click",()=>signOut(auth));
+        $app.querySelector('[data-action="heute"]').addEventListener("click",()=>{ state.cursor=new Date(); renderApp(); });
+        $app.querySelector('[data-action="prev"]').addEventListener("click",()=>{ navigate(-1); });
+        $app.querySelector('[data-action="next"]').addEventListener("click",()=>{ navigate(1); });
+        $app.querySelector('[data-action="neu"]').addEventListener("click",()=>openTerminModal(todayStr(), null, null));
+        $app.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click",()=>{ state.view=b.dataset.view; renderApp(); }));
+
+        bindBody();
+        // Zeitraster auf ~07:00 scrollen
+        const sc = document.getElementById("gridScroll");
+        if (sc) sc.scrollTop = 7*HOUR_PX - 8;
+      }
+
+      function navigate(dir){
+        if (state.view==="tag") state.cursor=addDays(state.cursor,dir);
+        else if (state.view==="woche") state.cursor=addDays(state.cursor,7*dir);
+        else state.cursor=new Date(state.cursor.getFullYear(), state.cursor.getMonth()+dir, 1);
+        renderApp();
+      }
+      function wocheTage(){ const mo=weekStart(state.cursor); return [0,1,2,3,4,5,6].map(i=>addDays(mo,i)); }
+      function titelText(){
+        const c = state.cursor;
+        if (state.view==="tag") return `KW ${isoWeek(c)} · ` + c.toLocaleDateString("de-DE",{weekday:"long",day:"2-digit",month:"long",year:"numeric"});
+        if (state.view==="woche"){ const mo=weekStart(c), su=addDays(mo,6);
+          const moM=MONATE[mo.getMonth()], suM=MONATE[su.getMonth()];
+          return `KW ${isoWeek(mo)} · ${mo.getDate()}. ${moM===suM?"":moM+" "}– ${su.getDate()}. ${suM} ${su.getFullYear()}`; }
+        return `${MONATE[c.getMonth()]} ${c.getFullYear()}`;
+      }
+
+      // ---------- Zeitraster (Tag / Woche) ----------
+      function renderZeitraster(days){
+        const von=days[0], bis=days[days.length-1];
+        const occ = vorkommen(von, bis);
+        const cols = `56px repeat(${days.length}, minmax(0,1fr))`;
+
+        // Kopfzeile
+        const header = `<div class="grid border-b border-gray-200" style="grid-template-columns:${cols}">
+          <div class="flex items-center justify-center text-[10px] font-bold uppercase text-gray-400">KW ${isoWeek(days[0])}</div>
+          ${days.map(d=>{ const isT=ymdD(d)===todayStr();
+            return `<div class="border-l border-gray-100 px-1 py-2 text-center">
+              <div class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">${WTAGE[mondayIdx(d)]}</div>
+              <div class="mx-auto mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold ${isT?"bg-brand-500 text-white":"text-gray-700"}">${d.getDate()}</div>
+            </div>`; }).join("")}
+        </div>`;
+
+        // Ganztägig-Zeile (nur wenn vorhanden)
+        const hatGanztags = occ.some(o=>o.allDay);
+        const allday = hatGanztags ? `<div class="grid border-b border-gray-200 bg-gray-50/60" style="grid-template-columns:${cols}">
+          <div class="px-1 py-1 text-right text-[10px] font-medium text-gray-400">ganzt.</div>
+          ${days.map(d=>{ const ds=ymdD(d); const list=occ.filter(o=>o.allDay&&o.datum===ds);
+            return `<div class="border-l border-gray-100 p-1 space-y-1">${list.map(o=>chip(o)).join("")}</div>`; }).join("")}
+        </div>` : "";
+
+        // Zeitgitter
+        const timeCol = `<div>${Array.from({length:24},(_,h)=>`<div style="height:${HOUR_PX}px" class="relative"><span class="absolute right-1 top-0 -translate-y-1/2 bg-white px-0.5 text-[10px] text-gray-400">${pad(h)}:00</span></div>`).join("")}</div>`;
+        const dayCols = days.map(d=>{
+          const ds = ymdD(d);
+          const list = layoutTag(occ.filter(o=>o.datum===ds));
+          const slots = Array.from({length:24},(_,h)=>`<div data-slot="${ds}|${h}" style="height:${HOUR_PX}px" class="cursor-pointer border-t border-gray-100 hover:bg-brand-50/40"></div>`).join("");
+          const events = list.map(o=>{
+            const top = o.startMin/60*HOUR_PX;
+            const h = Math.max(18, (o.endMin-o.startMin)/60*HOUR_PX - 2);
+            const w = 100/o.lanes, left = o.lane*w;
+            const col = o.done ? "background:#dcfce7;border-color:#86efac;color:#166534" : "background:#dbeafe;border-color:#93c5fd;color:#1e3a8a";
+            return `<div class="ev" data-occ="${o.id}" data-date="${o.datum}" style="top:${top}px;height:${h}px;left:calc(${left}% + 1px);width:calc(${w}% - 2px);${col}">
+              <div class="truncate font-semibold">${esc(o.termin.titel)} ${o.serie?"↻":""}</div>
+              <div class="truncate opacity-80">${esc(o.startzeit)}${o.endzeit?"–"+esc(o.endzeit):""}</div>
+            </div>`;
+          }).join("");
+          return `<div class="relative border-l border-gray-100">${slots}${events}</div>`;
+        }).join("");
+
+        const grid = `<div id="gridScroll" class="overflow-y-auto" style="max-height:64vh">
+          <div class="grid" style="grid-template-columns:${cols}">
+            ${timeCol}${dayCols}
+          </div>
+        </div>`;
+
+        return `<div class="card overflow-hidden">${header}${allday}${grid}</div>`;
+      }
+
+      function chip(o){
+        const col = o.done ? "bg-green-100 text-green-700" : "bg-brand-100 text-brand-700";
+        return `<div class="ev-chip truncate rounded px-1 py-0.5 text-[11px] font-medium cursor-pointer ${col}" data-occ="${o.id}" data-date="${o.datum}">${o.startzeit?esc(o.startzeit)+" ":""}${esc(o.termin.titel)} ${o.serie?"↻":""}</div>`;
+      }
+
+      // ---------- Monatsansicht (mit KW-Spalte) ----------
+      function renderMonat(){
+        const y=state.cursor.getFullYear(), m=state.cursor.getMonth();
+        const gridStart = weekStart(new Date(y,m,1));
+        const cells = Array.from({length:42},(_,i)=>addDays(gridStart,i));
+        const occ = vorkommen(cells[0], cells[41]);
+        const heute = todayStr();
+        const colsM = "40px repeat(7, minmax(0,1fr))";
+
+        const dayCell = d => {
+          const ds = ymdD(d); const imMonat = d.getMonth()===m;
+          const list = occ.filter(o=>o.datum===ds).sort((a,b)=>(a.startMin??1e9)-(b.startMin??1e9));
+          const chips = list.slice(0,3).map(o=>chip(o)).join("");
+          const mehr = list.length>3?`<div class="px-1 text-[11px] text-gray-400">+${list.length-3} mehr</div>`:"";
+          return `<div data-day="${ds}" class="flex min-h-[96px] cursor-pointer flex-col gap-0.5 border border-gray-100 p-1 ${imMonat?"bg-white hover:bg-gray-50":"bg-gray-50/60"}">
+            <div class="text-xs font-semibold ${ds===heute?"flex h-5 w-5 items-center justify-center rounded-full bg-brand-500 text-white":(imMonat?"text-gray-600":"text-gray-300")}">${d.getDate()}</div>
+            ${chips}${mehr}
+          </div>`;
+        };
+
+        let rows = "";
+        for (let w=0; w<6; w++){
+          const wd = cells.slice(w*7, w*7+7);
+          rows += `<div class="flex items-center justify-center border border-gray-100 bg-gray-50/70 text-[11px] font-bold text-gray-400">${isoWeek(wd[0])}</div>`;
+          rows += wd.map(dayCell).join("");
+        }
+
+        return `<div class="card overflow-hidden">
+          <div class="grid border-b border-gray-200 bg-gray-50 text-center text-xs font-semibold uppercase tracking-wide text-gray-400" style="grid-template-columns:${colsM}">
+            <div class="py-2">KW</div>${WTAGE.map(w=>`<div class="py-2">${w}</div>`).join("")}
+          </div>
+          <div class="grid" style="grid-template-columns:${colsM}">${rows}</div>
+        </div>`;
+      }
+
+      // ---------- Body-Events binden ----------
+      function bindBody(){
+        // Zeitslot anklicken -> neuer Termin
+        $app.querySelectorAll("[data-slot]").forEach(el=>el.addEventListener("click",()=>{
+          const [ds,h]=el.dataset.slot.split("|");
+          openTerminModal(ds, null, { startzeit:`${pad(Number(h))}:00`, endzeit:`${pad(Number(h)+1)}:00` });
+        }));
+        // Termin anklicken -> bearbeiten
+        const openEdit = el => { const t=state.termine.find(x=>x.id===el.dataset.occ); if(t) openTerminModal(el.dataset.date, t, null); };
+        $app.querySelectorAll(".ev,.ev-chip").forEach(el=>el.addEventListener("click",(e)=>{ e.stopPropagation(); openEdit(el); }));
+        // Monatstag anklicken -> Tagesliste
+        $app.querySelectorAll("[data-day]").forEach(el=>el.addEventListener("click",()=>openDayModal(el.dataset.day)));
+      }
+
+      // ---------- Tages-Übersicht (Monatsansicht) ----------
+      function openDayModal(dateStr){
+        const liste = vorkommenAm(dateStr);
+        const items = liste.length ? liste.map(o=>{
+          const t=o.termin;
+          return `<div class="card p-3">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2"><h4 class="font-semibold text-gray-900">${esc(t.titel)} ${o.serie?'<span class="text-brand-500">↻</span>':""}</h4>${o.done?`<span class="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">Erledigt</span>`:""}</div>
+                <div class="mt-0.5 text-sm text-gray-500">${o.startzeit?`🕐 ${esc(o.startzeit)}${o.endzeit?"–"+esc(o.endzeit):""} · `:""}${esc(t.reinigungsart||"")}</div>
+              </div>
+              <button data-edit="${t.id}" class="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-brand-600 hover:bg-brand-50">Öffnen</button>
+            </div>
+            <div class="mt-2 space-y-1 text-sm text-gray-600">
+              ${t.ort?`<div>📍 <a href="${mapsLink(t.ort)}" target="_blank" rel="noreferrer" class="text-brand-600 hover:underline">${esc(t.ort)}</a></div>`:""}
+              ${t.mitarbeiter?`<div>👤 ${esc(t.mitarbeiter)}</div>`:""}
+              ${(t.stunden!==undefined&&t.stunden!=="")?`<div>⏱️ ${esc(String(t.stunden))} Std abgerechnet</div>`:""}
+              ${t.notizen?`<div class="rounded-lg bg-amber-50 px-2 py-1.5 text-amber-800"><span class="font-medium">Notiz:</span> ${esc(t.notizen)}</div>`:""}
+            </div>
+          </div>`;
+        }).join("") : `<p class="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">Keine Termine an diesem Tag.</p>`;
+
+        $modal.innerHTML = `
+          <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4">
+            <div class="flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
+              <div class="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+                <h3 class="text-base font-semibold capitalize text-gray-900">${fmtLangDatum(dateStr)}</h3>
+                <button data-m="close" class="p-1 text-gray-400">✕</button>
+              </div>
+              <div class="flex-1 space-y-3 overflow-y-auto px-5 py-4">${items}</div>
+              <div class="border-t border-gray-200 p-4"><button data-add class="btn-primary w-full py-2.5">+ Termin hinzufügen</button></div>
+            </div>
+          </div>`;
+        $modal.querySelector('[data-m="close"]').addEventListener("click",closeModal);
+        $modal.querySelector("[data-add]").addEventListener("click",()=>openTerminModal(dateStr,null,null));
+        $modal.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click",()=>openTerminModal(dateStr, state.termine.find(t=>t.id===b.dataset.edit), null)));
+      }
+
+      // ---------- Termin anlegen / bearbeiten ----------
+      function openTerminModal(dateStr, t, prefill){
+        const isEdit = !!t;
+        const serie = t ? istSerie(t) : false;
+        const occDate = dateStr; // Datum des angeklickten Vorkommens
+        const f = {
+          titel: t?.titel||"", ort: t?.ort||"",
+          art: t?.reinigungsart || REINIGUNGSARTEN[0],
+          artFrei: (t && !REINIGUNGSARTEN.includes(t.reinigungsart)) ? t.reinigungsart : "",
+          datum: t?.datum || dateStr,
+          startzeit: t?.startzeit || t?.uhrzeit || prefill?.startzeit || "",
+          endzeit: t?.endzeit || prefill?.endzeit || "",
+          stunden: (t?.stunden!==undefined ? String(t.stunden) : ""),
+          mitarbeiter: t?.mitarbeiter || "",
+          notizen: t?.notizen || "",
+          wdh: serie ? t.wiederholung.typ : "keine",
+          wochentag: (serie && t.wiederholung.wochentag!==undefined) ? t.wiederholung.wochentag : mondayIdx(parseYMD(t?.datum || dateStr)),
+          bis: serie ? (t.wiederholung.bis||"") : "",
+          done: istErledigt(t||{}, occDate),
+        };
+        if (!REINIGUNGSARTEN.includes(f.art)) f.art = "Sonstiges";
+
+        const deleteBtns = isEdit ? (serie
+          ? `<button data-m="delOcc" class="rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Nur diesen Tag löschen</button>
+             <button data-m="delAll" class="rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Serie löschen</button>`
+          : `<button data-m="del" class="rounded-lg px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Löschen</button>`) : "";
+
+        $modal.innerHTML = `
+          <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4">
+            <div class="flex max-h-[95vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
+              <div class="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+                <h3 class="text-base font-semibold text-gray-900">${isEdit?"Termin bearbeiten":"Neuer Termin"}</h3>
+                <button data-m="close" class="p-1 text-gray-400">✕</button>
+              </div>
+              <div class="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+                <div id="tErr" class="hidden rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"></div>
+                <div><label class="label">Auftrag / Kunde *</label><input id="tTitel" class="input" value="${esc(f.titel)}" placeholder="z.B. Ferienwohnung Seeblick" /></div>
+                <div><label class="label">Adresse</label><input id="tOrt" class="input" value="${esc(f.ort)}" placeholder="Straße Nr., PLZ Ort" /></div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="label">Art der Reinigung</label><select id="tArt" class="input">${REINIGUNGSARTEN.map(x=>`<option ${f.art===x?"selected":""}>${x}</option>`).join("")}</select></div>
+                  <div id="tArtFreiWrap" class="${f.art==="Sonstiges"?"":"hidden"}"><label class="label">Eigene Angabe</label><input id="tArtFrei" class="input" value="${esc(f.artFrei)}" placeholder="manuell eintragen" /></div>
+                </div>
+                <div><label class="label">Datum *</label><input id="tDatum" type="date" class="input" value="${f.datum}" /></div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="label">Von</label><input id="tVon" type="time" class="input" value="${f.startzeit}" /></div>
+                  <div><label class="label">Bis</label><input id="tBis" type="time" class="input" value="${f.endzeit}" /></div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div><label class="label">Abrechnungsstunden</label><input id="tStunden" type="number" min="0" step="0.5" class="input" value="${esc(f.stunden)}" placeholder="z.B. 3.5" /></div>
+                  <div><label class="label">Mitarbeiter</label><input id="tMitarbeiter" class="input" value="${esc(f.mitarbeiter)}" placeholder="z.B. Ali & Bahar" /></div>
+                </div>
+                <div><label class="label">Notizen</label><textarea id="tNotizen" class="input min-h-[80px] resize-y" placeholder="z.B. Schlüssel beim Hausmeister, 2. Stock">${esc(f.notizen)}</textarea></div>
+
+                <!-- Wiederholung -->
+                <div class="rounded-lg border border-gray-200 p-3">
+                  <label class="label">Wiederholung</label>
+                  <select id="tWdh" class="input">
+                    <option value="keine" ${f.wdh==="keine"?"selected":""}>Einmalig</option>
+                    <option value="taeglich" ${f.wdh==="taeglich"?"selected":""}>Täglich</option>
+                    <option value="woechentlich" ${f.wdh==="woechentlich"?"selected":""}>Wöchentlich</option>
+                    <option value="jaehrlich" ${f.wdh==="jaehrlich"?"selected":""}>Jährlich</option>
+                  </select>
+                  <div id="tWdhOpts" class="${f.wdh!=="keine"?"":"hidden"} mt-3 grid grid-cols-2 gap-3">
+                    <div id="tWochentagWrap" class="${f.wdh==="woechentlich"?"":"hidden"}"><label class="label">Jeden</label><select id="tWochentag" class="input">${WTAGE_LANG.map((w,i)=>`<option value="${i}" ${f.wochentag===i?"selected":""}>${w}</option>`).join("")}</select></div>
+                    <div><label class="label">Wiederholen bis (optional)</label><input id="tWdhBis" type="date" class="input" value="${f.bis}" /></div>
+                  </div>
+                </div>
+
+                <label class="flex items-center gap-2 text-sm font-medium text-gray-700"><input id="tErledigt" type="checkbox" ${f.done?"checked":""} class="h-4 w-4 rounded border-gray-300" /> Als erledigt markieren${serie?` <span class="text-gray-400">(für ${occDate.split("-").reverse().join(".")})</span>`:""}</label>
+              </div>
+              <div class="flex items-center justify-between gap-2 border-t border-gray-200 px-5 py-4">
+                <div class="flex gap-1">${deleteBtns}</div>
+                <div class="flex gap-2">
+                  <button data-m="close" class="btn-secondary">Abbrechen</button>
+                  <button data-m="save" class="btn-primary">${isEdit?"Speichern":"Hinzufügen"}</button>
+                </div>
+              </div>
+            </div>
+          </div>`;
+
+        $modal.querySelector("#tArt").addEventListener("change",e=>$modal.querySelector("#tArtFreiWrap").classList.toggle("hidden", e.target.value!=="Sonstiges"));
+        $modal.querySelector("#tWdh").addEventListener("change",e=>{
+          $modal.querySelector("#tWdhOpts").classList.toggle("hidden", e.target.value==="keine");
+          $modal.querySelector("#tWochentagWrap").classList.toggle("hidden", e.target.value!=="woechentlich");
+        });
+        $modal.querySelector("#tDatum").addEventListener("change",e=>{ const sel=$modal.querySelector("#tWochentag"); if(sel) sel.value=String(mondayIdx(parseYMD(e.target.value))); });
+        $modal.querySelectorAll('[data-m="close"]').forEach(b=>b.addEventListener("click",closeModal));
+        $modal.querySelector('[data-m="save"]').addEventListener("click",()=>saveTermin(t, occDate));
+        $modal.querySelector('[data-m="del"]')?.addEventListener("click",()=>delSerie(t));
+        $modal.querySelector('[data-m="delAll"]')?.addEventListener("click",()=>delSerie(t));
+        $modal.querySelector('[data-m="delOcc"]')?.addEventListener("click",()=>delVorkommen(t, occDate));
+      }
+
+      async function saveTermin(t, occDate){
+        const g = id => $modal.querySelector(id);
+        const err = m => { const e=g("#tErr"); e.textContent=m; e.classList.remove("hidden"); };
+        const titel = g("#tTitel").value.trim();
+        const datum = g("#tDatum").value;
+        if (!titel) return err("Bitte Auftrag / Kunde angeben.");
+        if (!datum) return err("Bitte ein Datum wählen.");
+        const von=g("#tVon").value, bis=g("#tBis").value;
+        if (von && bis && parseMin(bis)<=parseMin(von)) return err("„Bis“ muss nach „Von“ liegen.");
+
+        const art = g("#tArt").value==="Sonstiges" ? (g("#tArtFrei").value.trim()||"Sonstiges") : g("#tArt").value;
+        const stRaw = g("#tStunden").value;
+        const wdh = g("#tWdh").value;
+        const done = g("#tErledigt").checked;
+
+        const payload = {
+          titel, ort:g("#tOrt").value.trim(), reinigungsart:art,
+          datum, startzeit:von, endzeit:bis, uhrzeit:von,
+          stunden: stRaw==="" ? "" : Number(stRaw),
+          mitarbeiter:g("#tMitarbeiter").value.trim(), notizen:g("#tNotizen").value.trim(),
+        };
+
+        if (wdh!=="keine"){
+          payload.wiederholung = { typ:wdh, bis:g("#tWdhBis").value||"" };
+          if (wdh==="woechentlich") payload.wiederholung.wochentag = Number(g("#tWochentag").value);
+          let erledigtTage = (t?.erledigtTage)||[];
+          erledigtTage = done ? Array.from(new Set([...erledigtTage, occDate])) : erledigtTage.filter(x=>x!==occDate);
+          payload.erledigtTage = erledigtTage;
+          payload.ausnahmen = (t?.ausnahmen)||[];
+          payload.erledigt = false;
+        } else {
+          payload.wiederholung = null;
+          payload.erledigt = done;
+        }
+
+        const btn=$modal.querySelector('[data-m="save"]'); btn.disabled=true; btn.textContent="Speichern …";
+        try {
+          if (t) await updateDoc(doc(db,"termine",t.id), payload);
+          else await addDoc(collection(db,"termine"), { ...payload, erstelltAm: serverTimestamp(), erstelltVon: state.user.email });
+          closeModal();
+        } catch(e){ console.error(e); err("Speichern fehlgeschlagen."); btn.disabled=false; btn.textContent = t?"Speichern":"Hinzufügen"; }
+      }
+
+      async function delSerie(t){
+        if (!t) return;
+        if (!confirm("Diesen Termin / diese Serie wirklich komplett löschen?")) return;
+        try { await deleteDoc(doc(db,"termine",t.id)); closeModal(); }
+        catch(e){ console.error(e); alert("Löschen fehlgeschlagen."); }
+      }
+      async function delVorkommen(t, dateStr){
+        if (!t) return;
+        if (!confirm(`Nur den Termin am ${dateStr.split("-").reverse().join(".")} löschen?`)) return;
+        try {
+          const aus = Array.from(new Set([...(t.ausnahmen||[]), dateStr]));
+          await updateDoc(doc(db,"termine",t.id), { ausnahmen: aus });
+          closeModal();
+        } catch(e){ console.error(e); alert("Löschen fehlgeschlagen."); }
+      }
+    </script>
+  </body>
+</html>
